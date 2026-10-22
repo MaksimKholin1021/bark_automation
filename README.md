@@ -85,7 +85,7 @@ These files stay on this computer. They are listed in `.gitignore` and must not 
 
 ## Run
 
-Leave the full-name Gmail window open before starting the sync. This starts Chrome with remote debugging so the program can read new Bark subjects without signing in again:
+Leave the full-name Gmail window open before starting the sync. Close any other Chrome window first. This starts Chrome with remote debugging so the program can read new Bark subjects every 5 minutes without signing in again:
 
 ```bat
 open_gmail_chrome.bat

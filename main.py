@@ -194,8 +194,8 @@ def reveal_pending(sheet: GoogleSheet, *, headless: bool) -> None:
 
 
 def _is_open_short_name(name: str) -> bool:
-    """A cell Bark has not finished: one name, no star, no (exist) or (str)."""
-    if not name or "*" in name or "(" in name:
+    """A cell still waiting for Bark's email: one name, no star, and not an (exist) row."""
+    if not name or "*" in name or "(exist)" in name.lower():
         return False
     return len(_plain_name(name).split()) == 1
 
@@ -233,8 +233,7 @@ def apply_bark_names(sheet: GoogleSheet) -> None:
     awaiting = load_awaiting()
     now = datetime.now(timezone.utc)
     if not chrome_is_open():
-        if awaiting:
-            logger.info("spearbig1021 Gmail is not open, so new full names are still waiting")
+        logger.info("Gmail is not open for reading, so new full names were not checked")
         return
 
     try:

@@ -158,7 +158,9 @@ def bark_subjects_by_account() -> dict[str, list[str]]:
     found: dict[str, list[str]] = {}
     with sync_playwright() as playwright:
         browser = playwright.chromium.connect_over_cdp(CHROME_DEBUG_URL)
+        fallback = None
         for context in browser.contexts:
+            fallback = context
             for page in context.pages:
                 if "mail.google.com/mail" not in page.url:
                     continue
@@ -169,32 +171,67 @@ def bark_subjects_by_account() -> dict[str, list[str]]:
                 match = re.search(r"/mail/u/(\d+)/", page.url)
                 if match:
                     account_index = match.group(1)
-                page.goto(
-                    "https://mail.google.com/mail/u/"
-                    + account_index
-                    + "/#search/from%3Ateam%40bark.com+newer_than%3A2d",
-                    wait_until="commit",
-                    timeout=60000,
-                )
-                page.wait_for_timeout(2500)
-                try:
-                    page.wait_for_selector("tr.zA", timeout=15000)
-                except Exception:
-                    logger.info("No Bark rows visible for %s", NAME_MAILBOX)
-                subjects = page.evaluate(
-                    """() => {
-                        const rows = [...document.querySelectorAll('tr.zA')];
-                        return rows.map(row => {
-                            const subject = row.querySelector('.bog');
-                            const text = subject ? subject.innerText : '';
-                            return (text || '').replace(/\\s+/g, ' ').trim();
-                        }).filter(Boolean);
-                    }"""
-                )
-                found[NAME_MAILBOX] = [str(subject) for subject in subjects]
+                _open_bark_search(page, account_index)
+                found[NAME_MAILBOX] = _visible_subjects(page)
+                return found
+        if fallback is not None and fallback.pages:
+            page = fallback.pages[0]
+            page.goto("https://mail.google.com/mail/u/0/", wait_until="commit", timeout=60000)
+            page.wait_for_timeout(2500)
+            if "accounts.google.com" in page.url:
+                logger.info("Sign in to %s in the debugging Chrome window and leave it open", NAME_MAILBOX)
+                return found
+            if _page_account(page) == NAME_MAILBOX:
+                _open_bark_search(page, "0")
+                found[NAME_MAILBOX] = _visible_subjects(page)
                 return found
     logger.info("No open Gmail tab for %s", NAME_MAILBOX)
     return found
+
+
+def _open_bark_search(page, account_index: str) -> None:
+    page.goto(
+        "https://mail.google.com/mail/u/"
+        + account_index
+        + "/#search/from%3Ateam%40bark.com+newer_than%3A2d+"
+        + "(speaking+to+OR+contacting)",
+        wait_until="commit",
+        timeout=60000,
+    )
+    page.wait_for_timeout(2500)
+
+
+def _visible_subjects(page) -> list[str]:
+    try:
+        page.wait_for_selector("tr.zA", timeout=15000)
+    except Exception:
+        logger.info("No new Bark name rows visible for %s", NAME_MAILBOX)
+        return []
+    subjects = page.evaluate(
+        """async () => {
+            const seen = new Set();
+            const found = [];
+            const take = () => {
+                for (const node of document.querySelectorAll('tr.zA .bog')) {
+                    const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
+                    if (text && !seen.has(text)) {
+                        seen.add(text);
+                        found.push(text);
+                    }
+                }
+            };
+            const scroller = document.querySelector('div.AO');
+            for (let step = 0; step < 6; step++) {
+                take();
+                if (!scroller) break;
+                scroller.scrollTop += scroller.clientHeight || 600;
+                await new Promise(resolve => setTimeout(resolve, 400));
+            }
+            take();
+            return found;
+        }"""
+    )
+    return [str(subject) for subject in subjects]
 
 
 def _page_account(page) -> str:
