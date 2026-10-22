@@ -190,48 +190,50 @@ def bark_subjects_by_account() -> dict[str, list[str]]:
 
 
 def _open_bark_search(page, account_index: str) -> None:
-    page.goto(
+    """Open the Bark search once. Reloading it wipes the rows the sync needs to read."""
+    target = (
         "https://mail.google.com/mail/u/"
         + account_index
         + "/#search/from%3Ateam%40bark.com+newer_than%3A2d+"
-        + "(speaking+to+OR+contacting)",
-        wait_until="commit",
-        timeout=60000,
+        + "(speaking+to+OR+contacting)"
     )
+    if f"/mail/u/{account_index}/" in page.url and "from%3Ateam%40bark.com" in page.url:
+        return
+    page.goto(target, wait_until="commit", timeout=60000)
     page.wait_for_timeout(2500)
 
 
 def _visible_subjects(page) -> list[str]:
-    try:
-        page.wait_for_selector("tr.zA", timeout=15000)
-    except Exception:
-        logger.info("No new Bark name rows visible for %s", NAME_MAILBOX)
-        return []
-    subjects = page.evaluate(
-        """async () => {
-            const seen = new Set();
-            const found = [];
-            const take = () => {
-                for (const node of document.querySelectorAll('tr.zA .bog')) {
-                    const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
-                    if (text && !seen.has(text)) {
-                        seen.add(text);
-                        found.push(text);
-                    }
+    """Gmail paints search rows slowly after a fresh window. Wait until they exist."""
+    script = """async () => {
+        const seen = new Set();
+        const found = [];
+        const take = () => {
+            for (const node of document.querySelectorAll('tr.zA .bog')) {
+                const text = (node.innerText || '').replace(/\\s+/g, ' ').trim();
+                if (text && !seen.has(text)) {
+                    seen.add(text);
+                    found.push(text);
                 }
-            };
-            const scroller = document.querySelector('div.AO');
-            for (let step = 0; step < 6; step++) {
-                take();
-                if (!scroller) break;
-                scroller.scrollTop += scroller.clientHeight || 600;
-                await new Promise(resolve => setTimeout(resolve, 400));
             }
+        };
+        const scroller = document.querySelector('div.AO');
+        for (let step = 0; step < 6; step++) {
             take();
-            return found;
-        }"""
-    )
-    return [str(subject) for subject in subjects]
+            if (!scroller) break;
+            scroller.scrollTop += scroller.clientHeight || 600;
+            await new Promise(resolve => setTimeout(resolve, 400));
+        }
+        take();
+        return found;
+    }"""
+    for _ in range(8):
+        subjects = [str(subject) for subject in page.evaluate(script) if str(subject).strip()]
+        if subjects:
+            return subjects
+        page.wait_for_timeout(2000)
+    logger.info("No new Bark name rows visible for %s", NAME_MAILBOX)
+    return []
 
 
 def _page_account(page) -> str:
